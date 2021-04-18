@@ -28,8 +28,13 @@ DEP := $(SRC:%.cpp=%.d)
 
 LDFLAGS := $(DEBUG)
 LDFLAGS += -lboost_program_options
-LDFLAGS += -lgmp
-LDFLAGS += -lmpfr
+# for CGAL?
+#LDFLAGS += -lgmp
+#LDFLAGS += -lmpfr
+
+LDFLAGS += -lOpenMeshCore
+LDFLAGS += -lgeos_c
+LDFLAGS += -lwkt
 
 #
 # CodeChecker support
@@ -52,7 +57,7 @@ all: $(PROG)
 
 $(PROG): $(SRC)
 
-install: $(PROG) $(SHLIBRARY) $(LIBRARY)
+install: $(PROG)
 	install -p -m 755 $(PROG) $(PREFIX)/bin
 
 uninstall:

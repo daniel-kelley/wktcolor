@@ -5,104 +5,230 @@
 
 */
 
+#include <assert.h>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <map>
+#include <utility>
 
 #include <boost/type_index.hpp>
 #include <boost/optional.hpp>
 #include <boost/program_options.hpp>
 
-#define USE_BOOST
+#include <OpenMesh/Core/IO/MeshIO.hh>
+#include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
 
-#ifdef USE_BOOST
-#include <boost/geometry.hpp>
-#include <boost/geometry/geometries/point_xy.hpp>
-#include <boost/geometry/geometries/linestring.hpp>
-#include <boost/geometry/geometries/polygon.hpp>
-
-typedef boost::geometry::model::d2::point_xy<double> point_type;
-#endif
-
-#ifdef USE_CGAL
-#include <CGAL/Simple_cartesian.h> // analyze OK (3:14)
-#include <CGAL/IO/WKT.h> // analyze OK (3:14)
-#include <CGAL/Exact_predicates_exact_constructions_kernel.h> // analyze ??
-#endif
+#include <wkt.h>
 
 using boost::typeindex::type_id_with_cvr;
 
-#ifdef USE_CGAL
-typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
+typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
 
-typedef CGAL::Point_2<Kernel> Point;
-typedef std::vector<Point> MultiPoint;
+/*
 
-typedef std::vector<Point> LineString;
-typedef std::vector<LineString> MultiLineString;
+  Strategy:
 
-typedef CGAL::Polygon_with_holes_2<Kernel> Polygon;
-typedef std::vector<Polygon> MultiPolygon;
-#endif
+  wktlib for file reading
+  geos_c for basic geometry
+  openmesh for polygonalization
+  igraph for graph analysis
+
+  #include <utility>
+  typedef std::pair<double,double> vertex;
+  std::map<vertex,int> uvertex;
+  std::vector<vertex>  svertex;
+
+  #include <OpenMesh/Core/IO/MeshIO.hh>
+  #include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
+  typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
+
+  wkt_open();
+  // count points and faces
+  wkt_iterate() {
+    error if ! polygon
+    for each point P {
+      ++points;
+    }
+    ++faces;
+  }
+
+  MyMesh mesh;
+  MyMesh::VertexHandle vhandle[points];
+  std::vector<MyMesh::VertexHandle>  face_vhandles;
+  wkt_iterate() {
+    face_vhandles.clear();
+    for each point P {
+      vertex v(P.x, P.y);
+      int idx = uvertex[vertex];
+      if (!idx) {
+        idx = svertex.size()+1
+        uvertex[v] = idx;
+        svertex.push_back(v);
+        vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(v[0], v[1], 0));
+        face_vhandles.push_back(vhandle[idx-1]);
+      }
+    }
+    mesh.add_face(face_vhandles);
+  }
+
+  wkt_close();
+
+ */
+
+typedef std::pair<double,double> vertex;
+
+struct polyinfo {
+    int points;
+    int faces;
+};
 
 class WktColor {
 public:
     int colors = 4;
     void run(std::string file);
 private:
-#ifdef USE_CGAL
-    MultiPoint points;
-    MultiLineString polylines;
-    MultiPolygon polygons;
-#endif
-    void color();
+    MyMesh mesh;
+    struct wkt wkt;
+    struct polyinfo info;
+    std::map<vertex,int> uvertex;
+    std::vector<vertex>  svertex;
+
+    void open();
     void read(std::string file);
+    void count();
+    void create_mesh();
+    void color();
+    void close();
 };
 
-void WktColor::run(std::string file)
+void WktColor::open()
 {
-    read(file);
-    color();
-}
-
-void WktColor::color()
-{
+    int err = wkt_open(&wkt);
+    assert(!err);
 }
 
 void WktColor::read(std::string file)
 {
-    std::ifstream input(file);
-    std::cout << "colors: " << colors << std::endl;
-    std::cout << "file: " << file << std::endl;
-#if 0
-    // Note: doesn't handle WKT GEOMETRYCOLLECTION - gets stuck in an
-    // infinite loop.
-    CGAL::read_WKT(input,points,polylines,polygons);
+    int err = wkt_read(&wkt, file.c_str());
+    assert(!err);
+}
 
-    if (points.size() > 0) {
-        std::cout << "points" << std::endl;
-    }
-    for(auto p : points) {
-        std::cout<<p<<std::endl;
-    }
+void WktColor::run(std::string file)
+{
+    open();
+    read(file);
+    create_mesh();
+    color();
+    close();
+}
 
-    if (polylines.size() > 0) {
-        std::cout << "lines" << std::endl;
-    }
-    for(auto ls : polylines) {
-        for(auto p : ls) {
-            std::cout<<p<<std::endl;
-        }
-    }
+static int geom_counter(struct wkt *wkt,
+                        const GEOSGeometry *geom,
+                        const char *gtype,
+                        void *user_data)
+{
+    struct polyinfo *info = (struct polyinfo *)user_data;
+    const GEOSGeometry *g;
+    const GEOSCoordSequence *seq;
+    int err;
+    int n;
+    unsigned int dim;
+    unsigned int size;
 
-    if (polygons.size() > 0) {
-        std::cout << "polygons" << std::endl;
+    // Only Polygons with no holes
+    assert(!strcmp(gtype, "Polygon"));
+    g = GEOSGetExteriorRing_r(wkt->handle, geom);
+    assert(g != NULL);
+    n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
+    assert(n == 0);
+
+    seq = GEOSGeom_getCoordSeq(g);
+    assert(seq != NULL);
+
+    // Only two dimensions
+    err = GEOSCoordSeq_getDimensions(seq, &dim);
+    assert(!err);
+    assert(dim == 2);
+
+    err = GEOSCoordSeq_getSize(seq, &size);
+    assert(!err);
+    assert(size != 0);
+
+    info->faces += 1;
+    info->points += size;
+
+    return 0;
+}
+
+// Count points and faces
+void WktColor::count()
+{
+    int err;
+    err = wkt_iterate(&wkt, geom_counter, &info);
+    assert(!err);
+}
+
+void WktColor::create_mesh()
+{
+  MyMesh::VertexHandle vhandle[info.points];
+  std::vector<MyMesh::VertexHandle>  face_vhandles;
+  int n;
+  int err;
+
+  n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+  for (int i=0; i<n; ++i) {
+      const GEOSGeometry *g;
+      const GEOSCoordSequence *seq;
+      unsigned int size;
+
+      face_vhandles.clear();
+      g = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+      assert(g != NULL);
+      seq = GEOSGeom_getCoordSeq(g);
+      assert(seq != NULL);
+      err = GEOSCoordSeq_getSize(seq, &size);
+      assert(!err);
+      for (unsigned int j = 0; j < size; ++j) {
+          double x;
+          double y;
+          GEOSCoordSeq_getXY(seq, j, &x, &y);
+          vertex v(x, y);
+          // idx 0 means "not found" so uvertex values are idx+1
+          // other vertex vectors are zero based.
+          int idx = uvertex[v];
+          if (!idx) {
+
+              assert(svertex.size() < (unsigned int)info.points);
+              idx = svertex.size() + 1;
+              uvertex[v] = idx;
+              svertex.push_back(v);
+              vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
+              face_vhandles.push_back(vhandle[idx-1]);
+          }
+      }
+      mesh.add_face(face_vhandles);
+  }
+
+}
+
+void WktColor::color()
+{
+    int err;
+    try {
+        err = OpenMesh::IO::write_mesh(mesh, "output.off");
+        assert(!err);
     }
-    for(auto p : polygons) {
-        std::cout<<p<<std::endl;
+    catch( std::exception& x ) {
+        std::cerr << x.what() << std::endl;
     }
-#endif
+}
+
+void WktColor::close()
+{
+    int err = wkt_close(&wkt);
+    assert(!err);
 }
 
 static void usage()
