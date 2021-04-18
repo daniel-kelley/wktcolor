@@ -89,6 +89,7 @@ struct polyinfo {
 class WktColor {
 public:
     int colors = 4;
+    int verbose = 0;
     void run(std::string file);
 private:
     MyMesh mesh;
@@ -101,6 +102,7 @@ private:
     void read(std::string file);
     void count();
     void create_mesh();
+    void save_mesh_geometry();
     void color();
     void close();
 };
@@ -128,6 +130,9 @@ void WktColor::run(std::string file)
     read(file);
     count();
     create_mesh();
+    if (verbose) {
+        save_mesh_geometry();
+    }
     color();
     close();
 }
@@ -201,11 +206,17 @@ void WktColor::create_mesh()
         assert(seq != NULL);
         ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
         assert(ok);
+        if (verbose) {
+            std::cout << "poly\n";
+        }
         for (unsigned int j = 0; j < size-1; ++j) {
             double x;
             double y;
             ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
             assert(ok);
+            if (verbose) {
+                std::cout << "  (" << x << "," << y << ")";
+            }
             vertex v(x, y);
             // idx 0 means "not found" so uvertex values are idx+1
             // other vertex vectors are zero based.
@@ -216,9 +227,17 @@ void WktColor::create_mesh()
                 idx = svertex.size() + 1;
                 uvertex[v] = idx;
                 svertex.push_back(v);
+                if (verbose) {
+                    std::cout << "+";
+                }
                 vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
+            } else if (verbose) {
+                std::cout << "@";
             }
             face_vhandles.push_back(vhandle[idx-1]);
+            if (verbose) {
+                std::cout << idx << "\n";
+            }
         }
         mesh.add_face(face_vhandles);
     }
@@ -226,6 +245,10 @@ void WktColor::create_mesh()
 }
 
 void WktColor::color()
+{
+}
+
+void WktColor::save_mesh_geometry()
 {
     int err;
     try {
@@ -245,7 +268,7 @@ void WktColor::close()
 static void usage()
 {
     std::cout
-        << "usage: wktcolors [-cN] [-h] file.wkt"
+        << "usage: wktcolors [-cN] [-hv] file.wkt"
         << std::endl;
 }
 
@@ -259,6 +282,7 @@ int main(int argc, char *argv[])
         boost::program_options::options_description
             options("Options");
         options.add_options()
+            //("verbose,v", "verbose")
             ("colors,c", boost::program_options::value(&colors), "colors")
             ("help,h", "help");
 
@@ -280,6 +304,10 @@ int main(int argc, char *argv[])
         if (colors) {
             wktcolor.colors = *colors;
         }
+
+        //if (cli.count("verbose")) {
+        //    wktcolor.verbose = 1;
+        //}
 
         auto v = args.options;
 #if 0
