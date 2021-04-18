@@ -180,48 +180,48 @@ void WktColor::count()
 
 void WktColor::create_mesh()
 {
-  MyMesh::VertexHandle vhandle[info.points];
-  std::vector<MyMesh::VertexHandle> face_vhandles;
-  int n;
-  int ok;
+    MyMesh::VertexHandle vhandle[info.points];
+    std::vector<MyMesh::VertexHandle> face_vhandles;
+    int n;
+    int ok;
 
-  n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
-  for (int i=0; i<n; ++i) {
-      const GEOSGeometry *poly;
-      const GEOSGeometry *ring;
-      const GEOSCoordSequence *seq;
-      unsigned int size;
+    n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+    for (int i=0; i<n; ++i) {
+        const GEOSGeometry *poly;
+        const GEOSGeometry *ring;
+        const GEOSCoordSequence *seq;
+        unsigned int size;
 
-      face_vhandles.clear();
-      poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
-      assert(poly != NULL);
-      ring = GEOSGetExteriorRing_r(wkt.handle, poly);
-      assert(ring != NULL);
-      seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
-      assert(seq != NULL);
-      ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
-      assert(ok);
-      for (unsigned int j = 0; j < size-1; ++j) {
-          double x;
-          double y;
-          ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
-          assert(ok);
-          vertex v(x, y);
-          // idx 0 means "not found" so uvertex values are idx+1
-          // other vertex vectors are zero based.
-          int idx = uvertex[v];
-          if (!idx) {
+        face_vhandles.clear();
+        poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+        assert(poly != NULL);
+        ring = GEOSGetExteriorRing_r(wkt.handle, poly);
+        assert(ring != NULL);
+        seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
+        assert(seq != NULL);
+        ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+        assert(ok);
+        for (unsigned int j = 0; j < size-1; ++j) {
+            double x;
+            double y;
+            ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
+            assert(ok);
+            vertex v(x, y);
+            // idx 0 means "not found" so uvertex values are idx+1
+            // other vertex vectors are zero based.
+            int idx = uvertex[v];
+            if (!idx) {
 
-              assert(svertex.size() < (unsigned int)info.points);
-              idx = svertex.size() + 1;
-              uvertex[v] = idx;
-              svertex.push_back(v);
-              vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
-          }
-          face_vhandles.push_back(vhandle[idx-1]);
-      }
-      mesh.add_face(face_vhandles);
-  }
+                assert(svertex.size() < (unsigned int)info.points);
+                idx = svertex.size() + 1;
+                uvertex[v] = idx;
+                svertex.push_back(v);
+                vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
+            }
+            face_vhandles.push_back(vhandle[idx-1]);
+        }
+        mesh.add_face(face_vhandles);
+    }
 
 }
 
