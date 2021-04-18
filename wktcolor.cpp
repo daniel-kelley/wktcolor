@@ -20,6 +20,8 @@
 #include <OpenMesh/Core/IO/MeshIO.hh>
 #include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
 
+#define GEOS_USE_ONLY_R_API
+#include <geos_c.h>
 #include <wkt.h>
 
 using boost::typeindex::type_id_with_cvr;
@@ -105,13 +107,18 @@ private:
 
 void WktColor::open()
 {
-    int err = wkt_open(&wkt);
+    int err;
+    memset(&wkt, 0, sizeof(wkt));
+    wkt.reader = WKT_IO_ASCII;
+    err = wkt_open(&wkt);
     assert(!err);
 }
 
 void WktColor::read(std::string file)
 {
-    int err = wkt_read(&wkt, file.c_str());
+    int err;
+
+    err = wkt_read(&wkt, file.c_str());
     assert(!err);
 }
 
@@ -119,6 +126,7 @@ void WktColor::run(std::string file)
 {
     open();
     read(file);
+    count();
     create_mesh();
     color();
     close();
@@ -132,7 +140,7 @@ static int geom_counter(struct wkt *wkt,
     struct polyinfo *info = (struct polyinfo *)user_data;
     const GEOSGeometry *g;
     const GEOSCoordSequence *seq;
-    int err;
+    int ok;
     int n;
     unsigned int dim;
     unsigned int size;
@@ -144,16 +152,16 @@ static int geom_counter(struct wkt *wkt,
     n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
     assert(n == 0);
 
-    seq = GEOSGeom_getCoordSeq(g);
+    seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
     assert(seq != NULL);
 
     // Only two dimensions
-    err = GEOSCoordSeq_getDimensions(seq, &dim);
-    assert(!err);
+    ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
+    assert(ok);
     assert(dim == 2);
 
-    err = GEOSCoordSeq_getSize(seq, &size);
-    assert(!err);
+    ok = GEOSCoordSeq_getSize_r(wkt->handle, seq, &size);
+    assert(ok);
     assert(size != 0);
 
     info->faces += 1;
@@ -173,27 +181,31 @@ void WktColor::count()
 void WktColor::create_mesh()
 {
   MyMesh::VertexHandle vhandle[info.points];
-  std::vector<MyMesh::VertexHandle>  face_vhandles;
+  std::vector<MyMesh::VertexHandle> face_vhandles;
   int n;
-  int err;
+  int ok;
 
   n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
   for (int i=0; i<n; ++i) {
-      const GEOSGeometry *g;
+      const GEOSGeometry *poly;
+      const GEOSGeometry *ring;
       const GEOSCoordSequence *seq;
       unsigned int size;
 
       face_vhandles.clear();
-      g = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
-      assert(g != NULL);
-      seq = GEOSGeom_getCoordSeq(g);
+      poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+      assert(poly != NULL);
+      ring = GEOSGetExteriorRing_r(wkt.handle, poly);
+      assert(ring != NULL);
+      seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
       assert(seq != NULL);
-      err = GEOSCoordSeq_getSize(seq, &size);
-      assert(!err);
+      ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+      assert(ok);
       for (unsigned int j = 0; j < size; ++j) {
           double x;
           double y;
-          GEOSCoordSeq_getXY(seq, j, &x, &y);
+          ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
+          assert(ok);
           vertex v(x, y);
           // idx 0 means "not found" so uvertex values are idx+1
           // other vertex vectors are zero based.
@@ -205,8 +217,8 @@ void WktColor::create_mesh()
               uvertex[v] = idx;
               svertex.push_back(v);
               vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
-              face_vhandles.push_back(vhandle[idx-1]);
           }
+          face_vhandles.push_back(vhandle[idx-1]);
       }
       mesh.add_face(face_vhandles);
   }
@@ -217,7 +229,7 @@ void WktColor::color()
 {
     int err;
     try {
-        err = OpenMesh::IO::write_mesh(mesh, "output.off");
+        (void)OpenMesh::IO::write_mesh(mesh, "output.off");
         assert(!err);
     }
     catch( std::exception& x ) {
@@ -227,8 +239,7 @@ void WktColor::color()
 
 void WktColor::close()
 {
-    int err = wkt_close(&wkt);
-    assert(!err);
+    wkt_close(&wkt);
 }
 
 static void usage()
@@ -263,6 +274,7 @@ int main(int argc, char *argv[])
         if (cli.count("help")) {
             usage();
             std::cout << desc << std::endl;
+            exit(0);
         }
 
         if (colors) {
@@ -285,8 +297,9 @@ int main(int argc, char *argv[])
                 << std::endl;
         });
 #endif
-        if (v.size() == 1) {
-            wktcolor.run(v[0].value[0]);
+        int fidx = v.size()-1;
+        if (fidx >= 0 && v[fidx].position_key == 0) {
+            wktcolor.run(v[fidx].value[0]);
             rc = EXIT_SUCCESS;
         } else {
             usage();
