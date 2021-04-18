@@ -201,7 +201,7 @@ void WktColor::create_mesh()
       assert(seq != NULL);
       ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
       assert(ok);
-      for (unsigned int j = 0; j < size; ++j) {
+      for (unsigned int j = 0; j < size-1; ++j) {
           double x;
           double y;
           ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
