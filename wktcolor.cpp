@@ -216,6 +216,24 @@ void WktColor::create_contact_graph()
     for (MyMesh::ConstFaceIter face = mesh.faces_begin();
          face != mesh.faces_end();
          ++face) {
+        MyMesh::FaceHandle fh = *face;
+        for (MyMesh::ConstFaceHalfedgeIter dart = mesh.cfh_iter(fh);
+             dart.is_valid();
+             ++dart) {
+            MyMesh::HalfedgeHandle heh = *dart;
+            if (verbose) {
+                std::cout
+                    << "dart("
+                    << type_id_with_cvr<decltype(fh)>().pretty_name()
+                    << "("
+                    << fh
+                    << ")+"
+                    << type_id_with_cvr<decltype(heh)>().pretty_name()
+                    << "("
+                    << heh
+                    << "))\n";
+            }
+        }
     }
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
@@ -293,21 +311,6 @@ int main(int argc, char *argv[])
         }
 
         auto v = args.options;
-#if 0
-        std::cout
-            << type_id_with_cvr<decltype(v)>().pretty_name()
-            << std::endl;
-#endif
-#if 0
-        for_each( v.begin(), v.end(), [] (auto val) {
-            // boost::program_options::basic_option<char>
-            std::cout
-                << val.position_key
-                << ":"
-                << val.value[0]
-                << std::endl;
-        });
-#endif
         int fidx = v.size()-1;
         if (fidx >= 0 && v[fidx].position_key == 0) {
             wktcolor.run(v[fidx].value[0]);
