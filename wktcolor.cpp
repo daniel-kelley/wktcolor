@@ -90,6 +90,7 @@ class WktColor {
 public:
     int colors = 4;
     int verbose = 0;
+    std::string geometry = {};
     void run(std::string file);
 private:
     MyMesh mesh;
@@ -130,7 +131,7 @@ void WktColor::run(std::string file)
     read(file);
     count();
     create_mesh();
-    if (verbose) {
+    if (geometry.size() > 0) {
         save_mesh_geometry();
     }
     color();
@@ -252,7 +253,7 @@ void WktColor::save_mesh_geometry()
 {
     int err;
     try {
-        (void)OpenMesh::IO::write_mesh(mesh, "output.off");
+        (void)OpenMesh::IO::write_mesh(mesh, geometry);
         assert(!err);
     }
     catch( std::exception& x ) {
@@ -279,11 +280,13 @@ int main(int argc, char *argv[])
 
     try {
         boost::optional<int> colors;
+        boost::optional<std::string> geometry;
         boost::program_options::options_description
             options("Options");
         options.add_options()
             ("verbose,v", "verbose")
             ("colors,c", boost::program_options::value(&colors), "colors")
+            ("geometry,g", boost::program_options::value(&geometry), "geometry")
             ("help,h", "help");
 
         boost::program_options::options_description desc;
@@ -307,6 +310,10 @@ int main(int argc, char *argv[])
 
         if (cli.count("verbose")) {
             wktcolor.verbose = 1;
+        }
+
+        if (cli.count("geometry")) {
+            wktcolor.geometry = *geometry;
         }
 
         auto v = args.options;
