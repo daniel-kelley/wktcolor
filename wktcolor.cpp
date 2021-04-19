@@ -93,8 +93,8 @@ public:
     void run(std::string file);
 private:
     MyMesh mesh;
-    struct wkt wkt;
-    struct polyinfo info;
+    struct wkt wkt = {};
+    struct polyinfo info = {};
     std::map<vertex,int> uvertex;
     std::vector<vertex>  svertex;
 
@@ -282,7 +282,7 @@ int main(int argc, char *argv[])
         boost::program_options::options_description
             options("Options");
         options.add_options()
-            //("verbose,v", "verbose")
+            ("verbose,v", "verbose")
             ("colors,c", boost::program_options::value(&colors), "colors")
             ("help,h", "help");
 
@@ -305,9 +305,9 @@ int main(int argc, char *argv[])
             wktcolor.colors = *colors;
         }
 
-        //if (cli.count("verbose")) {
-        //    wktcolor.verbose = 1;
-        //}
+        if (cli.count("verbose")) {
+            wktcolor.verbose = 1;
+        }
 
         auto v = args.options;
 #if 0
