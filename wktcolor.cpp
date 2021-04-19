@@ -24,6 +24,8 @@
 #include <geos_c.h>
 #include <wkt.h>
 
+#include <igraph/igraph.h>
+
 using boost::typeindex::type_id_with_cvr;
 
 typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
@@ -45,6 +47,7 @@ private:
     MyMesh mesh;
     struct wkt wkt = {};
     struct polyinfo info = {};
+    igraph_t contact = {};
     std::map<vertex,int> uvertex;
     std::vector<vertex>  svertex;
 
@@ -53,6 +56,7 @@ private:
     void count();
     void create_mesh();
     void save_mesh_geometry();
+    void create_contact_graph();
     void color();
     void close();
 };
@@ -83,6 +87,7 @@ void WktColor::run(std::string file)
     if (geometry.size() > 0) {
         save_mesh_geometry();
     }
+    create_contact_graph();
     color();
     close();
 }
@@ -192,6 +197,28 @@ void WktColor::create_mesh()
         mesh.add_face(face_vhandles);
     }
 
+}
+
+/*
+ * for each face
+ *   create graph node for face
+ *   for each dart
+ *     create edge to face on partner dart
+ *   end
+ * end
+ */
+void WktColor::create_contact_graph()
+{
+    igraph_vector_t edge;
+
+    // points is an over-estimate
+    igraph_vector_init(&edge, info.points);
+    for (MyMesh::ConstFaceIter face = mesh.faces_begin();
+         face != mesh.faces_end();
+         ++face) {
+    }
+
+    igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
 }
 
 void WktColor::color()
