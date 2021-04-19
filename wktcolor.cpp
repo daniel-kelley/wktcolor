@@ -28,57 +28,6 @@ using boost::typeindex::type_id_with_cvr;
 
 typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
 
-/*
-
-  Strategy:
-
-  wktlib for file reading
-  geos_c for basic geometry
-  openmesh for polygonalization
-  igraph for graph analysis
-
-  #include <utility>
-  typedef std::pair<double,double> vertex;
-  std::map<vertex,int> uvertex;
-  std::vector<vertex>  svertex;
-
-  #include <OpenMesh/Core/IO/MeshIO.hh>
-  #include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
-  typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
-
-  wkt_open();
-  // count points and faces
-  wkt_iterate() {
-    error if ! polygon
-    for each point P {
-      ++points;
-    }
-    ++faces;
-  }
-
-  MyMesh mesh;
-  MyMesh::VertexHandle vhandle[points];
-  std::vector<MyMesh::VertexHandle>  face_vhandles;
-  wkt_iterate() {
-    face_vhandles.clear();
-    for each point P {
-      vertex v(P.x, P.y);
-      int idx = uvertex[vertex];
-      if (!idx) {
-        idx = svertex.size()+1
-        uvertex[v] = idx;
-        svertex.push_back(v);
-        vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(v[0], v[1], 0));
-        face_vhandles.push_back(vhandle[idx-1]);
-      }
-    }
-    mesh.add_face(face_vhandles);
-  }
-
-  wkt_close();
-
- */
-
 typedef std::pair<double,double> vertex;
 
 struct polyinfo {
