@@ -3,6 +3,13 @@
 
    Copyright (c) 2021 by Daniel Kelley
 
+   Color faces of WKT Polygons
+
+   Output is a GraphML file with the following attributes:
+     color: unique color index 0-n with perhaps n < 4
+     x: polygonal face centriod X
+     y: polygonal face centriod Y
+
 */
 
 #include <cassert>
@@ -33,10 +40,13 @@ using MyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
 using vertex = std::pair<double,double>;
 
 struct polyinfo {
-    unsigned int points;
-    unsigned int faces;
+    unsigned int points;        // WKT points
+    unsigned int faces;         // WKT polygons
 };
 
+//
+// Polygon colorizer
+//
 class WktColor {
 public:
     void run(std::string file);
@@ -53,6 +63,7 @@ private:
     int verbose = 0;
     std::string geometry = {};
 
+    void init();
     void open();
     void read(std::string file);
     void count();
@@ -63,25 +74,42 @@ private:
     void close();
 };
 
+//
+// Initialize colorizing sequence
+//
+void WktColor::init()
+{
+    // must be called before other igraph functions
+    // according to comment in igraph cattributes.c
+    igraph_i_set_attribute_table(&igraph_cattribute_table);
+}
+
+//
+// Open given WKT file
+//
 void WktColor::open()
 {
     memset(&wkt, 0, sizeof(wkt));
     wkt.reader = WKT_IO_ASCII;
     auto err = wkt_open(&wkt);
     assert(!err);
-    // must be called before other igraph functions
-    // according to comment in igraph cattributes.c
-    igraph_i_set_attribute_table(&igraph_cattribute_table);
 }
 
+//
+// Read WKT file
+//
 void WktColor::read(std::string file)
 {
     auto err = wkt_read(&wkt, file.c_str());
     assert(!err);
 }
 
+//
+// Run algorithm over file
+//
 void WktColor::run(std::string file)
 {
+    init();
     open();
     read(file);
     count();
@@ -94,12 +122,19 @@ void WktColor::run(std::string file)
     close();
 }
 
+//
+// Count geometry
+//
+//   Subsequent operation need an idea of how may points and polygons
+//   to expect. Make sure geometry is what is expected.  No handling
+//   anything weird like non-polygons or polygons with holes.
+//
 static int geom_counter(struct wkt *wkt,
                         const GEOSGeometry *geom,
                         const char *gtype,
                         void *user_data)
 {
-    auto info = (struct polyinfo *)user_data;
+    auto info = reinterpret_cast<struct polyinfo *>(user_data);
     unsigned int dim = 0;
     unsigned int size = 0;
 
@@ -128,13 +163,21 @@ static int geom_counter(struct wkt *wkt,
     return 0;
 }
 
-// Count points and faces
+//
+// Count points and polygons (faces)
+//
 void WktColor::count()
 {
     auto err = wkt_iterate(&wkt, geom_counter, &info);
     assert(!err);
 }
 
+//
+// Create mesh data structure from polygons.
+//
+//   This leverages the nice half-edge data structure that OpenMesh
+//   provides.
+//
 void WktColor::create_mesh()
 {
     std::vector<MyMesh::VertexHandle> vhandle;
@@ -159,6 +202,9 @@ void WktColor::create_mesh()
         if (verbose) {
             std::cout << "poly\n";
         }
+
+        // GOES polygons are closed (last point == first point be definition)
+        // so don't bother looking at the last point in the polygon.
         for (unsigned int j = 0; j < size-1; ++j) {
             double x = 0.0;
             double y = 0.0;
@@ -173,7 +219,7 @@ void WktColor::create_mesh()
             auto idx = uvertex[v];
             if (!idx) {
 
-                assert(svertex.size() < (unsigned int)info.points);
+                assert(svertex.size() < info.points);
                 idx = svertex.size() + 1;
                 uvertex[v] = idx;
                 svertex.push_back(v);
@@ -194,15 +240,10 @@ void WktColor::create_mesh()
 
 }
 
-/*
- * for each face
- *   create graph node for face
- *   for each dart
- *     create edge to face on partner dart if not boundary
- *   end
- * end
- *  FaceHandle opposite_face_handle(HalfedgeHandle _heh)
- */
+//
+// Create a contact graph from the mesh. Each face is a vertex in the
+// graph, and there is an edge between faces that share a common edge.
+//
 void WktColor::create_contact_graph()
 {
     igraph_vector_t edge;
@@ -252,6 +293,9 @@ void WktColor::create_contact_graph()
     igraph_vector_destroy(&edge);
 }
 
+//
+// Colorize the contact graph.
+//
 void WktColor::color()
 {
     igraph_vector_int_t cv;
@@ -302,6 +346,9 @@ void WktColor::color()
     igraph_vector_int_destroy(&cv);
 }
 
+//
+// Save the mesh geometry to an 'OFF' file.
+//
 void WktColor::save_mesh_geometry()
 {
     try {
@@ -313,6 +360,9 @@ void WktColor::save_mesh_geometry()
     }
 }
 
+//
+// Close files, release memory.
+//
 void WktColor::close()
 {
     for (auto & g : centroid) {
@@ -323,13 +373,19 @@ void WktColor::close()
     wkt_close(&wkt);
 }
 
+//
+// Print a usage message
+//
 static void usage()
 {
     std::cout
-        << "usage: wktcolors [-cN] [-hv] file.wkt"
+        << "usage: wktcolors [-gOFF] [-hv] file.wkt"
         << std::endl;
 }
 
+//
+// main
+//
 int main(int argc, char *argv[])
 {
     int rc = EXIT_FAILURE;
