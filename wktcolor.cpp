@@ -5,7 +5,7 @@
 
 */
 
-#include <assert.h>
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -28,20 +28,20 @@
 
 using boost::typeindex::type_id_with_cvr;
 
-typedef OpenMesh::PolyMesh_ArrayKernelT<>  MyMesh;
+using MyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
 
-typedef std::pair<double,double> vertex;
+using vertex = std::pair<double,double>;
 
 struct polyinfo {
-    int points;
-    int faces;
+    unsigned int points;
+    unsigned int faces;
 };
 
 class WktColor {
 public:
-    int verbose = 0;
-    std::string geometry = {};
     void run(std::string file);
+    inline void set_verbose() { verbose=1; }
+    inline void set_geometry(std::string s) { geometry=s; }
 private:
     MyMesh mesh;
     struct wkt wkt = {};
@@ -50,6 +50,8 @@ private:
     std::map<vertex,int> uvertex;
     std::vector<vertex> svertex;
     std::vector<GEOSGeometry *> centroid;
+    int verbose = 0;
+    std::string geometry = {};
 
     void open();
     void read(std::string file);
@@ -63,18 +65,15 @@ private:
 
 void WktColor::open()
 {
-    int err;
     memset(&wkt, 0, sizeof(wkt));
     wkt.reader = WKT_IO_ASCII;
-    err = wkt_open(&wkt);
+    auto err = wkt_open(&wkt);
     assert(!err);
 }
 
 void WktColor::read(std::string file)
 {
-    int err;
-
-    err = wkt_read(&wkt, file.c_str());
+    auto err = wkt_read(&wkt, file.c_str());
     assert(!err);
 }
 
@@ -97,26 +96,22 @@ static int geom_counter(struct wkt *wkt,
                         const char *gtype,
                         void *user_data)
 {
-    struct polyinfo *info = (struct polyinfo *)user_data;
-    const GEOSGeometry *g;
-    const GEOSCoordSequence *seq;
-    int ok;
-    int n;
-    unsigned int dim;
-    unsigned int size;
+    auto info = (struct polyinfo *)user_data;
+    unsigned int dim = 0;
+    unsigned int size = 0;
 
     // Only Polygons with no holes
     assert(!strcmp(gtype, "Polygon"));
-    g = GEOSGetExteriorRing_r(wkt->handle, geom);
-    assert(g != NULL);
-    n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
+    auto g = GEOSGetExteriorRing_r(wkt->handle, geom);
+    assert(g != nullptr);
+    auto n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
     assert(n == 0);
 
-    seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
-    assert(seq != NULL);
+    auto seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
+    assert(seq != nullptr);
 
     // Only two dimensions
-    ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
+    auto ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
     assert(ok);
     assert(dim == 2);
 
@@ -133,33 +128,28 @@ static int geom_counter(struct wkt *wkt,
 // Count points and faces
 void WktColor::count()
 {
-    int err;
-    err = wkt_iterate(&wkt, geom_counter, &info);
+    auto err = wkt_iterate(&wkt, geom_counter, &info);
     assert(!err);
 }
 
 void WktColor::create_mesh()
 {
-    MyMesh::VertexHandle vhandle[info.points];
+    std::vector<MyMesh::VertexHandle> vhandle;
     std::vector<MyMesh::VertexHandle> face_vhandles;
-    int n;
-    int ok;
 
-    n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+    vhandle.resize(info.points);
+    int n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
     for (int i=0; i<n; ++i) {
-        const GEOSGeometry *poly;
-        const GEOSGeometry *ring;
-        const GEOSCoordSequence *seq;
-        unsigned int size;
+        unsigned int size = 0;
 
         face_vhandles.clear();
-        poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
-        assert(poly != NULL);
-        ring = GEOSGetExteriorRing_r(wkt.handle, poly);
-        assert(ring != NULL);
-        seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
-        assert(seq != NULL);
-        ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+        auto poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+        assert(poly != nullptr);
+        auto ring = GEOSGetExteriorRing_r(wkt.handle, poly);
+        assert(ring != nullptr);
+        auto seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
+        assert(seq != nullptr);
+        auto ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
         assert(ok);
         centroid.push_back(GEOSGetCentroid_r(wkt.handle, ring));
 
@@ -167,8 +157,8 @@ void WktColor::create_mesh()
             std::cout << "poly\n";
         }
         for (unsigned int j = 0; j < size-1; ++j) {
-            double x;
-            double y;
+            double x = 0.0;
+            double y = 0.0;
             ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
             assert(ok);
             if (verbose) {
@@ -177,7 +167,7 @@ void WktColor::create_mesh()
             vertex v(x, y);
             // idx 0 means "not found" so uvertex values are idx+1
             // other vertex vectors are zero based.
-            int idx = uvertex[v];
+            auto idx = uvertex[v];
             if (!idx) {
 
                 assert(svertex.size() < (unsigned int)info.points);
@@ -213,8 +203,8 @@ void WktColor::create_mesh()
 void WktColor::create_contact_graph()
 {
     igraph_vector_t edge;
-    int edge_id = 0;
-    int edge_limit = info.points * 2;
+    auto edge_limit = info.points * 2;
+    auto edge_id =  info.points * 0; // * 0 to derive type
     // edge_limit is an over-estimate
     igraph_vector_init(&edge, edge_limit);
 
@@ -262,27 +252,21 @@ void WktColor::create_contact_graph()
 void WktColor::color()
 {
     igraph_vector_int_t cv;
-    int err;
-    int i;
-    int faces = igraph_vcount(&contact);
+    auto faces = igraph_vcount(&contact);
 
     igraph_vector_int_init(&cv, 0);
-    err = igraph_vertex_coloring_greedy(
+    auto err = igraph_vertex_coloring_greedy(
         &contact,
         &cv,
         IGRAPH_COLORING_GREEDY_COLORED_NEIGHBORS);
     assert(!err);
 
-    for (i=0; i<faces; i++) {
-        const GEOSGeometry *g = centroid[i];
-        char *gtype;
-        double x;
-        double y;
-        int ok;
+    for (int i=0; i<faces; i++) {
+        auto g = centroid[i];
+        double x = 0.0;
+        double y = 0.0;
 
-        gtype = GEOSGeomType_r(wkt.handle,g);
-        assert(!strcmp(gtype, "Point"));
-        ok = GEOSGeomGetX_r(wkt.handle, g, &x);
+        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
         assert(ok);
         ok = GEOSGeomGetY_r(wkt.handle, g, &y);
         assert(ok);
@@ -295,8 +279,6 @@ void WktColor::color()
             << " "
             << VECTOR(cv)[i]
             << std::endl;
-
-        GEOSFree_r(wkt.handle, gtype);
     }
 
     igraph_vector_int_destroy(&cv);
@@ -304,9 +286,8 @@ void WktColor::color()
 
 void WktColor::save_mesh_geometry()
 {
-    int err;
     try {
-        (void)OpenMesh::IO::write_mesh(mesh, geometry);
+        auto err = OpenMesh::IO::write_mesh(mesh, geometry);
         assert(!err);
     }
     catch( std::exception& x ) {
@@ -316,8 +297,8 @@ void WktColor::save_mesh_geometry()
 
 void WktColor::close()
 {
-    for (auto g=centroid.begin(); g != centroid.end(); ++g) {
-        GEOSGeom_destroy_r(wkt.handle, *g);
+    for (auto & g : centroid) {
+        GEOSGeom_destroy_r(wkt.handle, g);
     }
 
     igraph_destroy(&contact);
@@ -361,16 +342,16 @@ int main(int argc, char *argv[])
         }
 
         if (cli.count("verbose")) {
-            wktcolor.verbose = 1;
+            wktcolor.set_verbose();
         }
 
         if (cli.count("geometry")) {
-            wktcolor.geometry = *geometry;
+            wktcolor.set_geometry(*geometry);
         }
 
         auto v = args.options;
-        int fidx = v.size()-1;
-        if (fidx >= 0 && v[fidx].position_key == 0) {
+        auto fidx = v.size()-1;
+        if (v[fidx].position_key == 0) {
             wktcolor.run(v[fidx].value[0]);
             rc = EXIT_SUCCESS;
         } else {

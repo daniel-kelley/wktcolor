@@ -2,3 +2,5 @@
 *.d
 *.wkt
 wktcolor
+reports
+compile_commands.json
