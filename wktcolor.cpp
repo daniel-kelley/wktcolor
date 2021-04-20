@@ -39,7 +39,6 @@ struct polyinfo {
 
 class WktColor {
 public:
-    int colors = 4;
     int verbose = 0;
     std::string geometry = {};
     void run(std::string file);
@@ -267,7 +266,7 @@ void WktColor::color()
     int i;
     int faces = igraph_vcount(&contact);
 
-    igraph_vector_int_init(&cv, colors);
+    igraph_vector_int_init(&cv, 0);
     err = igraph_vertex_coloring_greedy(
         &contact,
         &cv,
@@ -338,13 +337,11 @@ int main(int argc, char *argv[])
     WktColor wktcolor;
 
     try {
-        boost::optional<int> colors;
         boost::optional<std::string> geometry;
         boost::program_options::options_description
             options("Options");
         options.add_options()
             ("verbose,v", "verbose")
-            ("colors,c", boost::program_options::value(&colors), "colors")
             ("geometry,g", boost::program_options::value(&geometry), "geometry")
             ("help,h", "help");
 
@@ -361,10 +358,6 @@ int main(int argc, char *argv[])
             usage();
             std::cout << desc << std::endl;
             exit(0);
-        }
-
-        if (colors) {
-            wktcolor.colors = *colors;
         }
 
         if (cli.count("verbose")) {
