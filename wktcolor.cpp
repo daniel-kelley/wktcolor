@@ -203,44 +203,95 @@ void WktColor::create_mesh()
  * for each face
  *   create graph node for face
  *   for each dart
- *     create edge to face on partner dart
+ *     create edge to face on partner dart if not boundary
  *   end
  * end
+ *  FaceHandle opposite_face_handle(HalfedgeHandle _heh)
  */
 void WktColor::create_contact_graph()
 {
     igraph_vector_t edge;
+    int edge_id = 0;
+    int edge_limit = info.points * 2;
+    // edge_limit is an over-estimate
+    igraph_vector_init(&edge, edge_limit);
 
-    // points is an over-estimate
-    igraph_vector_init(&edge, info.points);
-    for (MyMesh::ConstFaceIter face = mesh.faces_begin();
-         face != mesh.faces_end();
-         ++face) {
-        MyMesh::FaceHandle fh = *face;
-        for (MyMesh::ConstFaceHalfedgeIter dart = mesh.cfh_iter(fh);
-             dart.is_valid();
-             ++dart) {
-            MyMesh::HalfedgeHandle heh = *dart;
+    for (auto face = mesh.faces_begin(); face != mesh.faces_end(); ++face) {
+        auto fh = *face;
+        for (auto dart = mesh.cfh_iter(fh); dart.is_valid(); ++dart) {
+            auto heh = *dart;
+            auto ofh = mesh.opposite_face_handle(heh);
             if (verbose) {
                 std::cout
-                    << "dart("
-                    << type_id_with_cvr<decltype(fh)>().pretty_name()
-                    << "("
-                    << fh
-                    << ")+"
-                    << type_id_with_cvr<decltype(heh)>().pretty_name()
-                    << "("
-                    << heh
-                    << "))\n";
+                << "dart("
+                << type_id_with_cvr<decltype(fh)>().pretty_name()
+                << "("
+                << fh
+                << "),"
+                << type_id_with_cvr<decltype(heh)>().pretty_name()
+                << "("
+                << heh
+                << ")->"
+                << type_id_with_cvr<decltype(ofh)>().pretty_name()
+                << "("
+                << ofh
+                << ")"
+                << ")\n";
+            }
+            if (ofh.is_valid()) {
+                // If the opposite half edge face is valid,
+                // i.e. opposite half edge is not a boundary, then
+                // create and edge between the two faces in the
+                // contact graph.
+                assert(edge_id < edge_limit);
+                VECTOR(edge)[edge_id] = fh.idx();
+                ++edge_id;
+                assert(edge_id < edge_limit);
+                VECTOR(edge)[edge_id] = ofh.idx();
+                ++edge_id;
             }
         }
     }
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
+    igraph_vector_destroy(&edge);
 }
 
 void WktColor::color()
 {
+    igraph_vector_int_t cv;
+    int err;
+    int i;
+    int faces = igraph_vcount(&contact);
+
+    igraph_vector_int_init(&cv, colors);
+    err = igraph_vertex_coloring_greedy(
+        &contact,
+        &cv,
+        IGRAPH_COLORING_GREEDY_COLORED_NEIGHBORS);
+    assert(!err);
+
+#if 0
+    igraph_i_set_attribute_table(&igraph_cattribute_table);
+#endif
+
+    for (i=0; i<faces; i++) {
+        std::cout << i << " " << VECTOR(cv)[i] << std::endl;
+#if 0
+        err = igraph_cattribute_VAN_set(
+            &contact,
+            "color",
+            i,
+            VECTOR(cv)[i]);
+        assert(!err);
+#endif
+    }
+
+    igraph_vector_int_destroy(&cv);
+#if 0
+    err = igraph_write_graph_graphml(&contact, stdout, 1);
+    assert(!err);
+#endif
 }
 
 void WktColor::save_mesh_geometry()
