@@ -274,17 +274,15 @@ void WktColor::color()
         IGRAPH_COLORING_GREEDY_COLORED_NEIGHBORS);
     assert(!err);
 
-#if 0
-    igraph_i_set_attribute_table(&igraph_cattribute_table);
-#endif
-
     for (i=0; i<faces; i++) {
         const GEOSGeometry *g = centroid[i];
+        char *gtype;
         double x;
         double y;
         int ok;
 
-        assert(!strcmp(GEOSGeomType_r(wkt.handle,g), "Point"));
+        gtype = GEOSGeomType_r(wkt.handle,g);
+        assert(!strcmp(gtype, "Point"));
         ok = GEOSGeomGetX_r(wkt.handle, g, &x);
         assert(ok);
         ok = GEOSGeomGetY_r(wkt.handle, g, &y);
@@ -298,21 +296,11 @@ void WktColor::color()
             << " "
             << VECTOR(cv)[i]
             << std::endl;
-#if 0
-        err = igraph_cattribute_VAN_set(
-            &contact,
-            "color",
-            i,
-            VECTOR(cv)[i]);
-        assert(!err);
-#endif
+
+        GEOSFree_r(wkt.handle, gtype);
     }
 
     igraph_vector_int_destroy(&cv);
-#if 0
-    err = igraph_write_graph_graphml(&contact, stdout, 1);
-    assert(!err);
-#endif
 }
 
 void WktColor::save_mesh_geometry()
@@ -329,6 +317,11 @@ void WktColor::save_mesh_geometry()
 
 void WktColor::close()
 {
+    for (auto g=centroid.begin(); g != centroid.end(); ++g) {
+        GEOSGeom_destroy_r(wkt.handle, *g);
+    }
+
+    igraph_destroy(&contact);
     wkt_close(&wkt);
 }
 
