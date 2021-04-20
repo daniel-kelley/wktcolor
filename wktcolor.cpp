@@ -5,110 +5,310 @@
 
 */
 
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <map>
+#include <utility>
 
 #include <boost/type_index.hpp>
 #include <boost/optional.hpp>
 #include <boost/program_options.hpp>
 
-#define USE_BOOST
+#include <OpenMesh/Core/IO/MeshIO.hh>
+#include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
 
-#ifdef USE_BOOST
-#include <boost/geometry.hpp>
-#include <boost/geometry/geometries/point_xy.hpp>
-#include <boost/geometry/geometries/linestring.hpp>
-#include <boost/geometry/geometries/polygon.hpp>
+#define GEOS_USE_ONLY_R_API
+#include <geos_c.h>
+#include <wkt.h>
 
-typedef boost::geometry::model::d2::point_xy<double> point_type;
-#endif
-
-#ifdef USE_CGAL
-#include <CGAL/Simple_cartesian.h> // analyze OK (3:14)
-#include <CGAL/IO/WKT.h> // analyze OK (3:14)
-#include <CGAL/Exact_predicates_exact_constructions_kernel.h> // analyze ??
-#endif
+#include <igraph/igraph.h>
 
 using boost::typeindex::type_id_with_cvr;
 
-#ifdef USE_CGAL
-typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
+using MyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
 
-typedef CGAL::Point_2<Kernel> Point;
-typedef std::vector<Point> MultiPoint;
+using vertex = std::pair<double,double>;
 
-typedef std::vector<Point> LineString;
-typedef std::vector<LineString> MultiLineString;
-
-typedef CGAL::Polygon_with_holes_2<Kernel> Polygon;
-typedef std::vector<Polygon> MultiPolygon;
-#endif
+struct polyinfo {
+    unsigned int points;
+    unsigned int faces;
+};
 
 class WktColor {
 public:
-    int colors = 4;
     void run(std::string file);
+    inline void set_verbose() { verbose=1; }
+    inline void set_geometry(std::string s) { geometry=s; }
 private:
-#ifdef USE_CGAL
-    MultiPoint points;
-    MultiLineString polylines;
-    MultiPolygon polygons;
-#endif
-    void color();
+    MyMesh mesh;
+    struct wkt wkt = {};
+    struct polyinfo info = {};
+    igraph_t contact = {};
+    std::map<vertex,int> uvertex;
+    std::vector<vertex> svertex;
+    std::vector<GEOSGeometry *> centroid;
+    int verbose = 0;
+    std::string geometry = {};
+
+    void open();
     void read(std::string file);
+    void count();
+    void create_mesh();
+    void save_mesh_geometry();
+    void create_contact_graph();
+    void color();
+    void close();
 };
 
-void WktColor::run(std::string file)
+void WktColor::open()
 {
-    read(file);
-    color();
-}
-
-void WktColor::color()
-{
+    memset(&wkt, 0, sizeof(wkt));
+    wkt.reader = WKT_IO_ASCII;
+    auto err = wkt_open(&wkt);
+    assert(!err);
 }
 
 void WktColor::read(std::string file)
 {
-    std::ifstream input(file);
-    std::cout << "colors: " << colors << std::endl;
-    std::cout << "file: " << file << std::endl;
-#if 0
-    // Note: doesn't handle WKT GEOMETRYCOLLECTION - gets stuck in an
-    // infinite loop.
-    CGAL::read_WKT(input,points,polylines,polygons);
+    auto err = wkt_read(&wkt, file.c_str());
+    assert(!err);
+}
 
-    if (points.size() > 0) {
-        std::cout << "points" << std::endl;
+void WktColor::run(std::string file)
+{
+    open();
+    read(file);
+    count();
+    create_mesh();
+    if (geometry.size() > 0) {
+        save_mesh_geometry();
     }
-    for(auto p : points) {
-        std::cout<<p<<std::endl;
+    create_contact_graph();
+    color();
+    close();
+}
+
+static int geom_counter(struct wkt *wkt,
+                        const GEOSGeometry *geom,
+                        const char *gtype,
+                        void *user_data)
+{
+    auto info = (struct polyinfo *)user_data;
+    unsigned int dim = 0;
+    unsigned int size = 0;
+
+    // Only Polygons with no holes
+    assert(!strcmp(gtype, "Polygon"));
+    auto g = GEOSGetExteriorRing_r(wkt->handle, geom);
+    assert(g != nullptr);
+    auto n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
+    assert(n == 0);
+
+    auto seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
+    assert(seq != nullptr);
+
+    // Only two dimensions
+    auto ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
+    assert(ok);
+    assert(dim == 2);
+
+    ok = GEOSCoordSeq_getSize_r(wkt->handle, seq, &size);
+    assert(ok);
+    assert(size != 0);
+
+    info->faces += 1;
+    info->points += size;
+
+    return 0;
+}
+
+// Count points and faces
+void WktColor::count()
+{
+    auto err = wkt_iterate(&wkt, geom_counter, &info);
+    assert(!err);
+}
+
+void WktColor::create_mesh()
+{
+    std::vector<MyMesh::VertexHandle> vhandle;
+    std::vector<MyMesh::VertexHandle> face_vhandles;
+
+    vhandle.resize(info.points);
+    int n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+    for (int i=0; i<n; ++i) {
+        unsigned int size = 0;
+
+        face_vhandles.clear();
+        auto poly = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+        assert(poly != nullptr);
+        auto ring = GEOSGetExteriorRing_r(wkt.handle, poly);
+        assert(ring != nullptr);
+        auto seq = GEOSGeom_getCoordSeq_r(wkt.handle, ring);
+        assert(seq != nullptr);
+        auto ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+        assert(ok);
+        centroid.push_back(GEOSGetCentroid_r(wkt.handle, ring));
+
+        if (verbose) {
+            std::cout << "poly\n";
+        }
+        for (unsigned int j = 0; j < size-1; ++j) {
+            double x = 0.0;
+            double y = 0.0;
+            ok = GEOSCoordSeq_getXY_r(wkt.handle, seq, j, &x, &y);
+            assert(ok);
+            if (verbose) {
+                std::cout << "  (" << x << "," << y << ")";
+            }
+            vertex v(x, y);
+            // idx 0 means "not found" so uvertex values are idx+1
+            // other vertex vectors are zero based.
+            auto idx = uvertex[v];
+            if (!idx) {
+
+                assert(svertex.size() < (unsigned int)info.points);
+                idx = svertex.size() + 1;
+                uvertex[v] = idx;
+                svertex.push_back(v);
+                if (verbose) {
+                    std::cout << "+";
+                }
+                vhandle[idx-1] = mesh.add_vertex(MyMesh::Point(x, y, 0));
+            } else if (verbose) {
+                std::cout << "@";
+            }
+            face_vhandles.push_back(vhandle[idx-1]);
+            if (verbose) {
+                std::cout << idx << "\n";
+            }
+        }
+        mesh.add_face(face_vhandles);
     }
 
-    if (polylines.size() > 0) {
-        std::cout << "lines" << std::endl;
-    }
-    for(auto ls : polylines) {
-        for(auto p : ls) {
-            std::cout<<p<<std::endl;
+}
+
+/*
+ * for each face
+ *   create graph node for face
+ *   for each dart
+ *     create edge to face on partner dart if not boundary
+ *   end
+ * end
+ *  FaceHandle opposite_face_handle(HalfedgeHandle _heh)
+ */
+void WktColor::create_contact_graph()
+{
+    igraph_vector_t edge;
+    auto edge_limit = info.points * 2;
+    auto edge_id =  info.points * 0; // * 0 to derive type
+    // edge_limit is an over-estimate
+    igraph_vector_init(&edge, edge_limit);
+
+    for (auto face = mesh.faces_begin(); face != mesh.faces_end(); ++face) {
+        auto fh = *face;
+        for (auto dart = mesh.cfh_iter(fh); dart.is_valid(); ++dart) {
+            auto heh = *dart;
+            auto ofh = mesh.opposite_face_handle(heh);
+            if (verbose) {
+                std::cout
+                << "dart("
+                << type_id_with_cvr<decltype(fh)>().pretty_name()
+                << "("
+                << fh
+                << "),"
+                << type_id_with_cvr<decltype(heh)>().pretty_name()
+                << "("
+                << heh
+                << ")->"
+                << type_id_with_cvr<decltype(ofh)>().pretty_name()
+                << "("
+                << ofh
+                << ")"
+                << ")\n";
+            }
+            if (ofh.is_valid()) {
+                // If the opposite half edge face is valid,
+                // i.e. opposite half edge is not a boundary, then
+                // create and edge between the two faces in the
+                // contact graph.
+                assert(edge_id < edge_limit);
+                VECTOR(edge)[edge_id] = fh.idx();
+                ++edge_id;
+                assert(edge_id < edge_limit);
+                VECTOR(edge)[edge_id] = ofh.idx();
+                ++edge_id;
+            }
         }
     }
 
-    if (polygons.size() > 0) {
-        std::cout << "polygons" << std::endl;
+    igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
+    igraph_vector_destroy(&edge);
+}
+
+void WktColor::color()
+{
+    igraph_vector_int_t cv;
+    auto faces = igraph_vcount(&contact);
+
+    igraph_vector_int_init(&cv, 0);
+    auto err = igraph_vertex_coloring_greedy(
+        &contact,
+        &cv,
+        IGRAPH_COLORING_GREEDY_COLORED_NEIGHBORS);
+    assert(!err);
+
+    for (int i=0; i<faces; i++) {
+        auto g = centroid[i];
+        double x = 0.0;
+        double y = 0.0;
+
+        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
+        assert(ok);
+        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
+        assert(ok);
+        std::cout
+            << i
+            << " "
+            << x
+            << " "
+            << y
+            << " "
+            << VECTOR(cv)[i]
+            << std::endl;
     }
-    for(auto p : polygons) {
-        std::cout<<p<<std::endl;
+
+    igraph_vector_int_destroy(&cv);
+}
+
+void WktColor::save_mesh_geometry()
+{
+    try {
+        auto err = OpenMesh::IO::write_mesh(mesh, geometry);
+        assert(!err);
     }
-#endif
+    catch( std::exception& x ) {
+        std::cerr << x.what() << std::endl;
+    }
+}
+
+void WktColor::close()
+{
+    for (auto & g : centroid) {
+        GEOSGeom_destroy_r(wkt.handle, g);
+    }
+
+    igraph_destroy(&contact);
+    wkt_close(&wkt);
 }
 
 static void usage()
 {
     std::cout
-        << "usage: wktcolors [-cN] [-h] file.wkt"
+        << "usage: wktcolors [-cN] [-hv] file.wkt"
         << std::endl;
 }
 
@@ -118,11 +318,12 @@ int main(int argc, char *argv[])
     WktColor wktcolor;
 
     try {
-        boost::optional<int> colors;
+        boost::optional<std::string> geometry;
         boost::program_options::options_description
             options("Options");
         options.add_options()
-            ("colors,c", boost::program_options::value(&colors), "colors")
+            ("verbose,v", "verbose")
+            ("geometry,g", boost::program_options::value(&geometry), "geometry")
             ("help,h", "help");
 
         boost::program_options::options_description desc;
@@ -137,30 +338,21 @@ int main(int argc, char *argv[])
         if (cli.count("help")) {
             usage();
             std::cout << desc << std::endl;
+            exit(0);
         }
 
-        if (colors) {
-            wktcolor.colors = *colors;
+        if (cli.count("verbose")) {
+            wktcolor.set_verbose();
+        }
+
+        if (cli.count("geometry")) {
+            wktcolor.set_geometry(*geometry);
         }
 
         auto v = args.options;
-#if 0
-        std::cout
-            << type_id_with_cvr<decltype(v)>().pretty_name()
-            << std::endl;
-#endif
-#if 0
-        for_each( v.begin(), v.end(), [] (auto val) {
-            // boost::program_options::basic_option<char>
-            std::cout
-                << val.position_key
-                << ":"
-                << val.value[0]
-                << std::endl;
-        });
-#endif
-        if (v.size() == 1) {
-            wktcolor.run(v[0].value[0]);
+        auto fidx = v.size()-1;
+        if (v[fidx].position_key == 0) {
+            wktcolor.run(v[fidx].value[0]);
             rc = EXIT_SUCCESS;
         } else {
             usage();

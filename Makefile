@@ -13,23 +13,27 @@ ifneq ($(SANITIZE),)
 DEBUG += -fsanitize=$(SANITIZE)
 endif
 
-INC ?=
-CXXFLAGS := $(INC) -MP -MMD
+INC :=
 
 WARN := -Wall
 WARN += -Wextra
 WARN += -Werror
-CPPFLAGS := $(WARN) $(DEBUG)
+
+CPPFLAGS := $(INC) -MP -MMD
+CXXFLAGS := $(WARN) $(DEBUG)
 
 SRC := wktcolor.cpp
 
 OBJ := $(SRC:%.cpp=%.o)
 DEP := $(SRC:%.cpp=%.d)
 
-LDFLAGS := $(DEBUG)
-LDFLAGS += -lboost_program_options
-LDFLAGS += -lgmp
-LDFLAGS += -lmpfr
+LDFLAGS :=
+
+LDLIBS += -lboost_program_options
+LDLIBS += -ligraph
+LDLIBS += -lOpenMeshCore
+LDLIBS += -lgeos_c
+LDLIBS += -lwkt
 
 #
 # CodeChecker support
@@ -52,7 +56,7 @@ all: $(PROG)
 
 $(PROG): $(SRC)
 
-install: $(PROG) $(SHLIBRARY) $(LIBRARY)
+install: $(PROG)
 	install -p -m 755 $(PROG) $(PREFIX)/bin
 
 uninstall:
