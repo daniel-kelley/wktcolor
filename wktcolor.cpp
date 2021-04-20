@@ -69,6 +69,9 @@ void WktColor::open()
     wkt.reader = WKT_IO_ASCII;
     auto err = wkt_open(&wkt);
     assert(!err);
+    // must be called before other igraph functions
+    // according to comment in igraph cattributes.c
+    igraph_i_set_attribute_table(&igraph_cattribute_table);
 }
 
 void WktColor::read(std::string file)
@@ -253,7 +256,6 @@ void WktColor::color()
 {
     igraph_vector_int_t cv;
     auto faces = igraph_vcount(&contact);
-
     igraph_vector_int_init(&cv, 0);
     auto err = igraph_vertex_coloring_greedy(
         &contact,
@@ -270,16 +272,32 @@ void WktColor::color()
         assert(ok);
         ok = GEOSGeomGetY_r(wkt.handle, g, &y);
         assert(ok);
-        std::cout
-            << i
-            << " "
-            << x
-            << " "
-            << y
-            << " "
-            << VECTOR(cv)[i]
-            << std::endl;
+        auto color = VECTOR(cv)[i];
+        if (verbose) {
+            std::cout
+                << "color( "
+                << i
+                << ","
+                << x
+                << ","
+                << y
+                << ","
+                << color
+                << ")"
+                << std::endl;
+        }
+
+        err = igraph_cattribute_VAN_set(&contact, "color", i, color);
+        assert(!err);
+        err = igraph_cattribute_VAN_set(&contact, "x", i, x);
+        assert(!err);
+        err = igraph_cattribute_VAN_set(&contact, "y", i, y);
+        assert(!err);
+
     }
+
+    err = igraph_write_graph_graphml(&contact, stdout, 1);
+    assert(!err);
 
     igraph_vector_int_destroy(&cv);
 }
