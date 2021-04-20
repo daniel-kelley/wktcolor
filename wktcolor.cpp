@@ -49,7 +49,8 @@ private:
     struct polyinfo info = {};
     igraph_t contact = {};
     std::map<vertex,int> uvertex;
-    std::vector<vertex>  svertex;
+    std::vector<vertex> svertex;
+    std::vector<GEOSGeometry *> centroid;
 
     void open();
     void read(std::string file);
@@ -161,6 +162,8 @@ void WktColor::create_mesh()
         assert(seq != NULL);
         ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
         assert(ok);
+        centroid.push_back(GEOSGetCentroid_r(wkt.handle, ring));
+
         if (verbose) {
             std::cout << "poly\n";
         }
@@ -276,7 +279,25 @@ void WktColor::color()
 #endif
 
     for (i=0; i<faces; i++) {
-        std::cout << i << " " << VECTOR(cv)[i] << std::endl;
+        const GEOSGeometry *g = centroid[i];
+        double x;
+        double y;
+        int ok;
+
+        assert(!strcmp(GEOSGeomType_r(wkt.handle,g), "Point"));
+        ok = GEOSGeomGetX_r(wkt.handle, g, &x);
+        assert(ok);
+        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
+        assert(ok);
+        std::cout
+            << i
+            << " "
+            << x
+            << " "
+            << y
+            << " "
+            << VECTOR(cv)[i]
+            << std::endl;
 #if 0
         err = igraph_cattribute_VAN_set(
             &contact,
