@@ -71,9 +71,19 @@ check: compile_commands.json
 compile_commands.json:
 	$(BEAR) $(MAKE)
 
+test: $(PROG) test_del.wkt
+	./$(PROG) -gtest.off test_del.wkt > test.gml
+	wktplot -TX -ctest.gml test_del.wkt
+
+test_del.wkt: test_p.wkt
+	wktdel $< > $@
+
+test_p.wkt:
+	wktrand  -q0.1 -r1.0 -x4 -y4 -n 10 > $@
+
 clean:
 	-rm -rf $(OBJ) $(DEP) $(PROG) \
-		compile_commands.json $(CODECHECKER_OUT)
-
+		compile_commands.json $(CODECHECKER_OUT) \
+		test*
 
 -include $(DEP)

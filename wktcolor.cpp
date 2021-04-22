@@ -354,8 +354,8 @@ void WktColor::color()
 void WktColor::save_mesh_geometry()
 {
     try {
-        auto err = OpenMesh::IO::write_mesh(mesh, geometry);
-        assert(!err);
+        auto ok = OpenMesh::IO::write_mesh(mesh, geometry);
+        assert(ok);
     }
     catch( std::exception& x ) {
         std::cerr << x.what() << std::endl;
