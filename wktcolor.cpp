@@ -290,6 +290,8 @@ void WktColor::create_contact_graph()
     }
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
+    // get rid of self loops and duplicate edges
+    igraph_simplify(&contact, 1, 1, NULL);
     igraph_vector_destroy(&edge);
 }
 
