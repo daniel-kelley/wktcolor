@@ -32,6 +32,7 @@ LDFLAGS :=
 LDLIBS += -lboost_program_options
 LDLIBS += -ligraph
 LDLIBS += -lOpenMeshCore
+LDLIBS += -lColPack
 LDLIBS += -lgeos_c
 LDLIBS += -lwkt
 
