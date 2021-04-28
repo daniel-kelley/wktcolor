@@ -143,53 +143,44 @@ void WktColor::run(std::string file)
 }
 
 //
-// Count geometry
+// Count points and polygons (faces)
 //
-//   Subsequent operation need an idea of how may points and polygons
+//   Subsequent operations need an idea of how may points and polygons
 //   to expect. Make sure geometry is what is expected.  No handling
 //   anything weird like non-polygons or polygons with holes.
 //
-static int geom_counter(struct wkt *wkt,
-                        const GEOSGeometry *geom,
-                        const char *gtype,
-                        void *user_data)
-{
-    auto info = reinterpret_cast<struct polyinfo *>(user_data);
-    unsigned int dim = 0;
-    unsigned int size = 0;
-
-    // Only Polygons with no holes
-    assert(!strcmp(gtype, "Polygon"));
-    auto g = GEOSGetExteriorRing_r(wkt->handle, geom);
-    assert(g != nullptr);
-    auto n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
-    assert(n == 0);
-
-    auto seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
-    assert(seq != nullptr);
-
-    // Only two dimensions
-    auto ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
-    assert(ok);
-    assert(dim == 2);
-
-    ok = GEOSCoordSeq_getSize_r(wkt->handle, seq, &size);
-    assert(ok);
-    assert(size != 0);
-
-    info->faces += 1;
-    info->points += size;
-
-    return 0;
-}
-
-//
-// Count points and polygons (faces)
-//
 void WktColor::count()
 {
-    auto err = wkt_iterate(&wkt, geom_counter, &info);
-    assert(!err);
+    auto n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+    for (int i=0; i<n; i++) {
+        auto geom = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+        assert(geom);
+
+        unsigned int dim = 0;
+        unsigned int size = 0;
+
+        // Only Polygons with no holes
+        auto g = GEOSGetExteriorRing_r(wkt.handle, geom);
+        assert(g != nullptr);
+        auto h = GEOSGetNumInteriorRings_r(wkt.handle, geom);
+        assert(h == 0);
+
+        auto seq = GEOSGeom_getCoordSeq_r(wkt.handle, g);
+        assert(seq != nullptr);
+
+        // Only two dimensions
+        auto ok = GEOSCoordSeq_getDimensions_r(wkt.handle, seq, &dim);
+        assert(ok);
+        assert(dim == 2);
+
+        ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+        assert(ok);
+        assert(size != 0);
+
+        info.faces += 1;
+        info.points += size;
+
+    }
 }
 
 //
@@ -311,7 +302,25 @@ void WktColor::create_contact_graph()
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
     // get rid of self loops and duplicate edges
-    igraph_simplify(&contact, 1, 1, NULL);
+    igraph_simplify(&contact, 1, 1, nullptr);
+
+    // Add centroid attributes
+    auto faces = igraph_vcount(&contact);
+    for (int i=0; i<faces; i++) {
+        auto g = centroid[i];
+        double x = 0.0;
+        double y = 0.0;
+
+        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
+        assert(ok);
+        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
+        assert(ok);
+        auto err = igraph_cattribute_VAN_set(&contact, "x", i, x);
+        assert(!err);
+        err = igraph_cattribute_VAN_set(&contact, "y", i, y);
+        assert(!err);
+    }
+
     igraph_vector_destroy(&edge);
 }
 
@@ -330,23 +339,11 @@ void WktColor::igraph_color()
     assert(!err);
 
     for (int i=0; i<faces; i++) {
-        auto g = centroid[i];
-        double x = 0.0;
-        double y = 0.0;
-
-        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
-        assert(ok);
-        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
-        assert(ok);
         auto color = VECTOR(cv)[i];
         if (verbose) {
             std::cout
                 << "color( "
                 << i
-                << ","
-                << x
-                << ","
-                << y
                 << ","
                 << color
                 << ")"
@@ -354,10 +351,6 @@ void WktColor::igraph_color()
         }
 
         err = igraph_cattribute_VAN_set(&contact, "color", i, color);
-        assert(!err);
-        err = igraph_cattribute_VAN_set(&contact, "x", i, x);
-        assert(!err);
-        err = igraph_cattribute_VAN_set(&contact, "y", i, y);
         assert(!err);
 
     }
@@ -376,8 +369,8 @@ void WktColor::colpack_create_adj_file()
         // Use a temporary file if no specific output was requested.
         // We just care about a unique name, so close the returned
         // file handle.
-        char file[] = "wktcolorXXXXXX";
-        ::close(mkstemp(file));
+        std::string file("wktcolorXXXXXX");
+        ::close(mkstemp(data(file)));
         adj_file = file;
         adj_tmp = true;
     }
@@ -404,8 +397,8 @@ void WktColor::colpack_create_adj_file()
         << edges << "\n";
 
     while (!IGRAPH_EIT_END(eit)) {
-        igraph_integer_t v1;
-        igraph_integer_t v2;
+        igraph_integer_t v1 = 0;
+        igraph_integer_t v2 = 0;
         auto eid = IGRAPH_EIT_GET(eit);
         err = igraph_edge(&contact, eid, &v1, &v2);
         // MM is One based - just like FORTRAN
@@ -429,16 +422,16 @@ void WktColor::colpack_create_adj_file()
 
 void WktColor::colpack_color()
 {
-    auto g = new ColPack::GraphColoringInterface(
+    auto g = ColPack::GraphColoringInterface(
         SRC_FILE,
         adj_file.c_str(),
         "MM");
-    g->Coloring(ordering, algorithm);
+    g.Coloring(ordering, algorithm);
     if (verbose) {
-        g->PrintVertexColoringMetrics();
+        g.PrintVertexColoringMetrics();
     }
     vector<int> color;
-    g->GetVertexColors(color);
+    g.GetVertexColors(color);
     for (unsigned int i=0; i<color.size(); ++i) {
         auto err = igraph_cattribute_VAN_set(&contact, "color", i, color[i]);
         assert(!err);
@@ -465,6 +458,7 @@ void WktColor::color()
     auto err = igraph_write_graph_graphml(&contact, output, 1);
     assert(!err);
 
+    ::fclose(output);
 }
 
 //
@@ -472,7 +466,7 @@ void WktColor::color()
 // int igraph_clique_number(const igraph_t *graph, igraph_integer_t *no);
 void WktColor::show_clique_number()
 {
-    igraph_integer_t clique_number;
+    igraph_integer_t clique_number = 0;
     auto err = igraph_clique_number(&contact, &clique_number);
 
     assert(!err);
