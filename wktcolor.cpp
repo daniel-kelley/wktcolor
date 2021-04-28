@@ -33,6 +33,8 @@
 
 #include <igraph/igraph.h>
 
+#include <ColPack/ColPackHeaders.h>
+
 using boost::typeindex::type_id_with_cvr;
 
 using MyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
@@ -52,6 +54,11 @@ public:
     void run(std::string file);
     inline void set_verbose() { verbose=1; }
     inline void set_geometry(std::string s) { geometry=s; }
+    inline void set_algorithm(std::string s) { algorithm=s; }
+    inline void set_ordering(std::string s) { ordering=s; }
+    inline void set_adj_file(std::string s) { adj_file=s; }
+    inline void set_gml_file(std::string s) { gml_file=s; }
+    inline void request_clique_number() { clique=1; }
 private:
     MyMesh mesh;
     struct wkt wkt = {};
@@ -61,8 +68,13 @@ private:
     std::vector<vertex> svertex;
     std::vector<GEOSGeometry *> centroid;
     int verbose = 0;
+    int clique = 0;
     std::string geometry = {};
-
+    std::string algorithm = "igraph"; // igraph or various ColPack
+    std::string ordering = "NATURAL"; // ColPack ordering
+    std::string adj_file = {};
+    std::string gml_file = {};
+    bool adj_tmp = false;
     void init();
     void open();
     void read(std::string file);
@@ -70,7 +82,11 @@ private:
     void create_mesh();
     void save_mesh_geometry();
     void create_contact_graph();
+    void igraph_color();
+    void colpack_create_adj_file();
+    void colpack_color();
     void color();
+    void show_clique_number();
     void close();
 };
 
@@ -118,58 +134,53 @@ void WktColor::run(std::string file)
         save_mesh_geometry();
     }
     create_contact_graph();
-    color();
+    if (clique) {
+        show_clique_number();
+    } else {
+        color();
+    }
     close();
-}
-
-//
-// Count geometry
-//
-//   Subsequent operation need an idea of how may points and polygons
-//   to expect. Make sure geometry is what is expected.  No handling
-//   anything weird like non-polygons or polygons with holes.
-//
-static int geom_counter(struct wkt *wkt,
-                        const GEOSGeometry *geom,
-                        const char *gtype,
-                        void *user_data)
-{
-    auto info = reinterpret_cast<struct polyinfo *>(user_data);
-    unsigned int dim = 0;
-    unsigned int size = 0;
-
-    // Only Polygons with no holes
-    assert(!strcmp(gtype, "Polygon"));
-    auto g = GEOSGetExteriorRing_r(wkt->handle, geom);
-    assert(g != nullptr);
-    auto n = GEOSGetNumInteriorRings_r(wkt->handle, geom);
-    assert(n == 0);
-
-    auto seq = GEOSGeom_getCoordSeq_r(wkt->handle, g);
-    assert(seq != nullptr);
-
-    // Only two dimensions
-    auto ok = GEOSCoordSeq_getDimensions_r(wkt->handle, seq, &dim);
-    assert(ok);
-    assert(dim == 2);
-
-    ok = GEOSCoordSeq_getSize_r(wkt->handle, seq, &size);
-    assert(ok);
-    assert(size != 0);
-
-    info->faces += 1;
-    info->points += size;
-
-    return 0;
 }
 
 //
 // Count points and polygons (faces)
 //
+//   Subsequent operations need an idea of how may points and polygons
+//   to expect. Make sure geometry is what is expected.  No handling
+//   anything weird like non-polygons or polygons with holes.
+//
 void WktColor::count()
 {
-    auto err = wkt_iterate(&wkt, geom_counter, &info);
-    assert(!err);
+    auto n = GEOSGetNumGeometries_r(wkt.handle, wkt.geom);
+    for (int i=0; i<n; i++) {
+        auto geom = GEOSGetGeometryN_r(wkt.handle, wkt.geom, i);
+        assert(geom);
+
+        unsigned int dim = 0;
+        unsigned int size = 0;
+
+        // Only Polygons with no holes
+        auto g = GEOSGetExteriorRing_r(wkt.handle, geom);
+        assert(g != nullptr);
+        auto h = GEOSGetNumInteriorRings_r(wkt.handle, geom);
+        assert(h == 0);
+
+        auto seq = GEOSGeom_getCoordSeq_r(wkt.handle, g);
+        assert(seq != nullptr);
+
+        // Only two dimensions
+        auto ok = GEOSCoordSeq_getDimensions_r(wkt.handle, seq, &dim);
+        assert(ok);
+        assert(dim == 2);
+
+        ok = GEOSCoordSeq_getSize_r(wkt.handle, seq, &size);
+        assert(ok);
+        assert(size != 0);
+
+        info.faces += 1;
+        info.points += size;
+
+    }
 }
 
 //
@@ -291,14 +302,32 @@ void WktColor::create_contact_graph()
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
     // get rid of self loops and duplicate edges
-    igraph_simplify(&contact, 1, 1, NULL);
+    igraph_simplify(&contact, 1, 1, nullptr);
+
+    // Add centroid attributes
+    auto faces = igraph_vcount(&contact);
+    for (int i=0; i<faces; i++) {
+        auto g = centroid[i];
+        double x = 0.0;
+        double y = 0.0;
+
+        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
+        assert(ok);
+        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
+        assert(ok);
+        auto err = igraph_cattribute_VAN_set(&contact, "x", i, x);
+        assert(!err);
+        err = igraph_cattribute_VAN_set(&contact, "y", i, y);
+        assert(!err);
+    }
+
     igraph_vector_destroy(&edge);
 }
 
 //
-// Colorize the contact graph.
+// Colorize the contact graph with igraph.
 //
-void WktColor::color()
+void WktColor::igraph_color()
 {
     igraph_vector_int_t cv;
     auto faces = igraph_vcount(&contact);
@@ -310,23 +339,11 @@ void WktColor::color()
     assert(!err);
 
     for (int i=0; i<faces; i++) {
-        auto g = centroid[i];
-        double x = 0.0;
-        double y = 0.0;
-
-        auto ok = GEOSGeomGetX_r(wkt.handle, g, &x);
-        assert(ok);
-        ok = GEOSGeomGetY_r(wkt.handle, g, &y);
-        assert(ok);
         auto color = VECTOR(cv)[i];
         if (verbose) {
             std::cout
                 << "color( "
                 << i
-                << ","
-                << x
-                << ","
-                << y
                 << ","
                 << color
                 << ")"
@@ -335,17 +352,125 @@ void WktColor::color()
 
         err = igraph_cattribute_VAN_set(&contact, "color", i, color);
         assert(!err);
-        err = igraph_cattribute_VAN_set(&contact, "x", i, x);
-        assert(!err);
-        err = igraph_cattribute_VAN_set(&contact, "y", i, y);
-        assert(!err);
 
     }
 
-    err = igraph_write_graph_graphml(&contact, stdout, 1);
+    igraph_vector_int_destroy(&cv);
+}
+
+//
+// The ColPack interface uses an adjacency matrix file format
+// as input. Only the row and column of each edge should be present.
+//
+
+void WktColor::colpack_create_adj_file()
+{
+    if (adj_file.size() == 0) {
+        // Use a temporary file if no specific output was requested.
+        // We just care about a unique name, so close the returned
+        // file handle.
+        std::string file("wktcolorXXXXXX");
+        ::close(mkstemp(data(file)));
+        adj_file = file;
+        adj_tmp = true;
+    }
+
+    std::ofstream adj(adj_file);
+    assert(adj);
+
+    auto faces = igraph_vcount(&contact);
+    igraph_eit_t eit;
+    auto err = igraph_eit_create(
+        &contact,
+        igraph_ess_all(IGRAPH_EDGEORDER_ID),
+        &eit);
     assert(!err);
 
-    igraph_vector_int_destroy(&cv);
+    // The MatrixMarket matrix must be square with both forward and
+    // reverse edges represented as matrix coordinates. The associated
+    // value is ignored.
+    int edges = IGRAPH_EIT_SIZE(eit) * 2;
+
+    adj << "%%MatrixMarket matrix coordinate real general\n"
+        << faces << " "
+        << faces << " "
+        << edges << "\n";
+
+    while (!IGRAPH_EIT_END(eit)) {
+        igraph_integer_t v1 = 0;
+        igraph_integer_t v2 = 0;
+        auto eid = IGRAPH_EIT_GET(eit);
+        err = igraph_edge(&contact, eid, &v1, &v2);
+        // MM is One based - just like FORTRAN
+        ++v1;
+        ++v2;
+        assert(!err);
+        adj << v1 << " " << v2 << " 0.0\n"; // forward edge
+        adj << v2 << " " << v1 << " 0.0\n"; // reverse edge
+        IGRAPH_EIT_NEXT(eit);
+    }
+
+    igraph_eit_destroy(&eit);
+    adj.close();
+}
+
+//
+// Colorize the contact graph with colpack.
+//
+// Algorithm and Ordering is from GraphColoringInterface.h
+//
+
+void WktColor::colpack_color()
+{
+    auto g = ColPack::GraphColoringInterface(
+        SRC_FILE,
+        adj_file.c_str(),
+        "MM");
+    g.Coloring(ordering, algorithm);
+    if (verbose) {
+        g.PrintVertexColoringMetrics();
+    }
+    vector<int> color;
+    g.GetVertexColors(color);
+    for (unsigned int i=0; i<color.size(); ++i) {
+        auto err = igraph_cattribute_VAN_set(&contact, "color", i, color[i]);
+        assert(!err);
+    }
+
+    if (adj_tmp) {
+        ::unlink(adj_file.c_str());
+    }
+}
+
+void WktColor::color()
+{
+    if (algorithm == "igraph") {
+        igraph_color();
+    } else {
+        colpack_create_adj_file();
+        colpack_color();
+    }
+
+    FILE *output =
+        gml_file.size() ? ::fopen(gml_file.c_str(), "w") : stdout;
+    assert(output);
+
+    auto err = igraph_write_graph_graphml(&contact, output, 1);
+    assert(!err);
+
+    ::fclose(output);
+}
+
+//
+// Show the Clique Number for the graph
+// int igraph_clique_number(const igraph_t *graph, igraph_integer_t *no);
+void WktColor::show_clique_number()
+{
+    igraph_integer_t clique_number = 0;
+    auto err = igraph_clique_number(&contact, &clique_number);
+
+    assert(!err);
+    std::cout << clique_number << std::endl;
 }
 
 //
@@ -395,11 +520,28 @@ int main(int argc, char *argv[])
 
     try {
         boost::optional<std::string> geometry;
+        boost::optional<std::string> algorithm;
+        boost::optional<std::string> ordering;
+        boost::optional<std::string> adj_file;
+        boost::optional<std::string> gml_file;
         boost::program_options::options_description
             options("Options");
         options.add_options()
             ("verbose,v", "verbose")
             ("geometry,g", boost::program_options::value(&geometry), "geometry")
+            ("clique-number,N", "Clique number")
+            ("algorithm,a",
+             boost::program_options::value(&algorithm),
+             "Coloring algorithm")
+            ("ordering,O",
+             boost::program_options::value(&ordering),
+             "Color ordering")
+            ("adj-file,m",
+             boost::program_options::value(&adj_file),
+             "ADJ file")
+            ("gml-file,o",
+             boost::program_options::value(&gml_file),
+             "GML output file")
             ("help,h", "help");
 
         boost::program_options::options_description desc;
@@ -423,6 +565,26 @@ int main(int argc, char *argv[])
 
         if (cli.count("geometry")) {
             wktcolor.set_geometry(*geometry);
+        }
+
+        if (cli.count("clique-number")) {
+            wktcolor.request_clique_number();
+        }
+
+        if (cli.count("algorithm")) {
+            wktcolor.set_algorithm(*algorithm);
+        }
+
+        if (cli.count("ordering")) {
+            wktcolor.set_ordering(*ordering);
+        }
+
+        if (cli.count("adj-file")) {
+            wktcolor.set_adj_file(*adj_file);
+        }
+
+        if (cli.count("gml-file")) {
+            wktcolor.set_gml_file(*gml_file);
         }
 
         auto v = args.options;
