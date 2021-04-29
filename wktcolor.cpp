@@ -97,7 +97,7 @@ void WktColor::init()
 {
     // must be called before other igraph functions
     // according to comment in igraph cattributes.c
-    igraph_i_set_attribute_table(&igraph_cattribute_table);
+    igraph_set_attribute_table(&igraph_cattribute_table);
 }
 
 //
