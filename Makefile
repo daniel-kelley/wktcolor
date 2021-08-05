@@ -75,7 +75,7 @@ check: compile_commands.json
 	$(CODECHECKER) parse $< $(CODECHECKER_OUT)
 
 compile_commands.json:
-	$(BEAR) $(MAKE)
+	$(BEAR) -- $(MAKE)
 
 test: $(PROG) test_del.wkt
 	./$(PROG) -gtest.off test_del.wkt > test_a.gml
