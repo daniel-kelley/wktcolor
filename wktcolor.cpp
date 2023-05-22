@@ -35,6 +35,8 @@
 
 #include <ColPack/ColPackHeaders.h>
 
+#include <gsl/gsl-lite.hpp>
+
 using boost::typeindex::type_id_with_cvr;
 
 using MyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
@@ -64,7 +66,7 @@ private:
     struct wkt wkt = {};
     struct polyinfo info = {};
     igraph_t contact = {};
-    std::map<vertex,int> uvertex;
+    std::map<vertex,size_t> uvertex;
     std::vector<vertex> svertex;
     std::vector<GEOSGeometry *> centroid;
     int verbose = 0;
@@ -257,11 +259,11 @@ void WktColor::create_mesh()
 //
 void WktColor::create_contact_graph()
 {
-    igraph_vector_t edge;
+    igraph_vector_int_t edge;
     auto edge_limit = info.points * 2;
     auto edge_id =  info.points * 0; // * 0 to derive type
     // edge_limit is an over-estimate
-    igraph_vector_init(&edge, edge_limit);
+    igraph_vector_int_init(&edge, edge_limit);
 
     for (auto face = mesh.faces_begin(); face != mesh.faces_end(); ++face) {
         auto fh = *face;
@@ -302,7 +304,7 @@ void WktColor::create_contact_graph()
 
     igraph_create(&contact, &edge, 0, IGRAPH_UNDIRECTED);
     // get rid of self loops and duplicate edges
-    igraph_simplify(&contact, 1, 1, nullptr);
+    igraph_simplify(&contact, true, true, nullptr);
 
     // Add centroid attributes
     auto faces = igraph_vcount(&contact);
@@ -321,7 +323,7 @@ void WktColor::create_contact_graph()
         assert(!err);
     }
 
-    igraph_vector_destroy(&edge);
+    igraph_vector_int_destroy(&edge);
 }
 
 //
@@ -340,6 +342,7 @@ void WktColor::igraph_color()
 
     for (int i=0; i<faces; i++) {
         auto color = VECTOR(cv)[i];
+        auto ncolor = gsl::narrow_cast<double>(color);
         if (verbose) {
             std::cout
                 << "color( "
@@ -350,7 +353,7 @@ void WktColor::igraph_color()
                 << std::endl;
         }
 
-        err = igraph_cattribute_VAN_set(&contact, "color", i, color);
+        err = igraph_cattribute_VAN_set(&contact, "color", i, ncolor);
         assert(!err);
 
     }
@@ -451,11 +454,14 @@ void WktColor::color()
         colpack_color();
     }
 
-    FILE *output =
-        gml_file.size() ? ::fopen(gml_file.c_str(), "w") : stdout;
+    gsl::owner<FILE *> output = nullptr;
+
+    output = gml_file.size() ?
+        gsl::owner<FILE *>(::fopen(gml_file.c_str(), "w")) :
+        gsl::owner<FILE *>(stdout);
     assert(output);
 
-    auto err = igraph_write_graph_graphml(&contact, output, 1);
+    auto err = igraph_write_graph_graphml(&contact, output, true);
     assert(!err);
 
     ::fclose(output);
@@ -503,11 +509,13 @@ void WktColor::close()
 //
 // Print a usage message
 //
-static void usage()
+namespace {
+void usage()
 {
     std::cout
         << "usage: wktcolors [-gOFF] [-hv] file.wkt"
         << std::endl;
+}
 }
 
 //
